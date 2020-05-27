@@ -1,0 +1,449 @@
+---
+title: "Mediation and moderation analysis using the TSI data"
+author: "F.M. Mobegi, PhD"
+date: "01/07/2019"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#setwd("R:/CMPH-SAHMRI/Fredrick Mobegi/Yarrabah_study/mediation and interaction/")
+
+```
+
+#### Load required packages
+```{r}
+library("mediation")
+library("dplyr")
+library("stringr")
+
+```
+
+#### Data preparation
+```{r}
+abundance <- read.delim("abundance.txt", check.names = F, sep = "\t", row.names = 1)
+
+abundance <- abundance[rowSums(abundance <= 0.01) <= 70, ]## greater than 0.01 relab in 30% of the samples
+abundance <- sweep(abundance, 1, rowSums(abundance), '/')## rescale relative abundance to add up to 1 across all samples
+abundance <- t(abundance)
+# abundance <- subset(abundance, select = as.vector(rem))
+abundance <- tibble::rownames_to_column(as.data.frame(abundance), var = "ID")
+
+metadata<- read.delim("tsi_all_data_formatted.txt", check.names = F, header = T, sep = "\t")
+dat <- left_join(metadata, abundance, by = "ID")
+## Biomarkers data that was transformed.
+trans.biomark <- c("rbg","TNFalpha","CRP","HbA1cIFCC","IFN_gamma","IL10","IL12p40","IL12p70","IL13","IL15","IL17A",
+                   "IL18","IL1beta","IL2","IL33","IL4","IL5","IL6","LBP","MCP1","MIP1alpha")
+
+## Log transform biomarkers
+dat[trans.biomark] <- lapply(dat[trans.biomark],function(p) {log10(p+1)}) ##log biomarkers not normally distributed.
+
+##log transform bacteria
+##arcsine transform bacteria
+dat.arc <- dat ### arcsine transformation (also called the arcsine square root transformation, or the angular transformation)
+dat.log <- dat ### log transform
+dat.presAbs <- dat ##presence absence bacteria
+
+dat.arc[,47:ncol(dat.arc)] <- lapply((dat.arc[,47:ncol(dat.arc)]),function(p) {asin(sqrt(p))})
+dat.log[,47:ncol(dat.log)] <- lapply((dat.log[,47:ncol(dat.log)]),function(p) {log10(p+1)})
+dat.presAbs[,47:ncol(dat.presAbs)] <- lapply((dat.presAbs[,47:ncol(dat.presAbs)]),function(p) {ifelse(p>0,1,0)})
+
+########## select variables to be used as exposures and outcomes #################
+outcomes <- c("BMI","waist_h_r","dbp","rbg","sbp","Hypertension","Diabetes","TNFalpha","CRP","HbA1cIFCC","IFN_gamma",
+              "IL10","IL12p40","IL12p70","IL13","IL15","IL17A","IL18","IL1beta","IL2","IL33","IL4","IL6","LBP",
+              "MCP1","MIP1alpha", "MAP")
+
+exposures <- c("Age","Fruits","Seafood","Gender","Smoking_cig","Sugar_drinks","Takeaway","Vegetables","Alcohol","Site")
+
+```
+#### genus mediations analysis
+```{r}
+
+genus <- read.delim("../processing files/metaphlan/merged_yar_all_metaphlan_genus.txt", header = T, 
+                    check.names = F, sep = "\t", row.names = 1)
+genus <- genus[rowSums(genus < 0.01) <= 70, ]
+genus <- sweep(genus, 1, rowSums(genus), '/')## rescale relative genus to add up to 1 across all samples
+genus <- t(genus)
+genus <- tibble::rownames_to_column(as.data.frame(genus), var = "ID")
+
+## Test normalist of Methanobrevibacter
+# df <- as.numeric(na.omit(genus[,1]))
+# p <- round(shapiro.test(df)$p.value, digits = 4)
+# w <- round(shapiro.test(df)$statistic[[1]][1], digits = 4)
+# hist(df,  main=paste0("metahobrevibacter", "\nShapiro-Wilk [p=",p,"; W=",w,"]"), probability=TRUE, col="gray", border="white")
+# lines(density(df), lwd = 2, col = "chocolate3")
+###################################################
+
+dat.g <- left_join(metadata, genus, by = "ID")
+## Biomarkers data that was transformed.
+trans.biomark <- c("rbg","TNFalpha","CRP","HbA1cIFCC","IFN_gamma","IL10","IL12p40","IL12p70","IL13","IL15","IL17A",
+                   "IL18","IL1beta","IL2","IL33","IL4","IL5","IL6","LBP","MCP1","MIP1alpha")
+
+## Log transform biomarkers
+dat.g[trans.biomark] <- lapply(dat.g[trans.biomark],function(p) {log10(p+1)}) ##log biomarkers not normally distributed.
+dat.arc.g <- dat.g
+dat.arc.g[,47:ncol(dat.arc.g)] <- lapply((dat.arc.g[,47:ncol(dat.arc.g)]),function(p) {asin(sqrt(p))})
+
+
+sink("Mediation_arcsineGenusAbundance.doc")
+for (outc in outcomes){
+  for (name in exposures){
+    for (i in 47:ncol(dat.arc.g)){
+      dat.x <- na.omit(dat.arc.g[,c(names(dat.arc.g[i]),name, outc)])
+      dput(names(dat.x))
+      colnames(dat.x) <- c("x","y","z")
+      ## A fitted model object for mediator
+      med.fit <- lm(x ~ y, data = dat.x)
+      ## A fitted model object for outcomes
+      out.fit <- glm(z ~ x + y ,data = dat.x, family = gaussian)
+      ## Mediate with bootsrapping
+      med.out <- mediate(med.fit, out.fit, treat = "y", mediator = "x", sims = 1000, boot = TRUE)
+		  mediation:::print.summary.mediate(med.out)
+}}}
+sink()
+
+############## Age adjusted #####################
+sink("Mediation_arcsineGenusAbundance_ageAdj.doc")
+for (outc in outcomes){
+  for (name in exposures){
+    for (i in 47:ncol(dat.arc.g)){
+      if(name=="Age"){next}else{
+        set.seed(1234)
+        dat.x <- na.omit(dat.arc.g[,c(names(dat.arc.g[i]),name, outc,"Age")])
+        dput(names(dat.x))
+        colnames(dat.x) <- c("x","y","z","Age")
+        ## A fitted model object for mediator
+        med.fit <- lm(x ~ y + Age, data = dat.x)
+        ## A fitted model object for outcomes
+        out.fit <- glm(z ~ x + y + Age ,data = dat.x, family = gaussian)
+        ## Mediate with bootsrapping
+        med.out <- mediate(med.fit, out.fit, treat = "y", mediator = "x", sims = 1000, boot = TRUE)
+        #print(summary(med.out))
+		    mediation:::print.summary.mediate(summary(med.out))
+}}}}
+sink()
+
+set.seed(1234)# unadjusted
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks, data = dat.arc)
+out.fit <- glm(IL15 ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks ,data = dat.arc, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)# adj = age
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "IL15","Age")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age, data = dat.x)
+out.fit <- glm(IL15 ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)#adj = age +site
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "IL15","Age", "Site")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age+Site, data = dat.x)
+out.fit <- glm(IL15 ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age+Site ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)#adj = age+site+Fruit+Vegetables+Takeaway+Seafood
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "IL15","Age", "Site", "Fruits", "Vegetables", "Takeaway", "Seafood", "Gender", "BMI", "Alcohol", "Smoking_cig")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age+Site+Fruits+Vegetables+Takeaway+Seafood+Gender+BMI+Alcohol+Smoking_cig, data = dat.x)
+out.fit <- glm(IL15 ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age+Site+Fruits+Vegetables+Takeaway+Seafood+Gender+BMI+Alcohol+Smoking_cig ,data = dat.x, family = gaussian)
+med.out1 <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+mediation:::print.summary.mediate(summary(med.out1))
+    
+
+####################  DBP ##############
+set.seed(1234)# unadjusted
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "IL15","Age", "Site","dbp")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks, data = dat.x)
+out.fit <- glm(dbp ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)# adj = age
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "dbp","Age")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age, data = dat.x)
+out.fit <- glm(dbp ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("age")
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)#adj = age +site
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "dbp","Age", "Site")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age+Site, data = dat.x)
+out.fit <- glm(dbp ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age+Site ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("age+site")
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)#adj = age+site+Fruit+Vegetables+Takeaway+Seafood
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "dbp","Age", "Site", "Fruits", "Vegetables", "Takeaway", "Seafood", "Gender", "BMI", "Alcohol", "Smoking_cig")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age+Site+Fruits+Vegetables+Takeaway+Seafood+Gender+BMI+Alcohol+Smoking_cig, data = dat.x)
+out.fit <- glm(dbp ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age+Site+Fruits+Vegetables+Takeaway+Seafood+Gender+BMI+Alcohol+Smoking_cig ,data = dat.x, family = gaussian)
+med.out1 <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("mutivariate")
+mediation:::print.summary.mediate(summary(med.out1))
+
+####################  SBP ##############
+set.seed(1234)# unadjusted
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "Age", "Site","sbp")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks, data = dat.x)
+out.fit <- glm(sbp ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)# adj = age
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "sbp","Age")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age, data = dat.x)
+out.fit <- glm(sbp ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("age")
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)#adj = age +site
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "sbp","Age", "Site")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age+Site, data = dat.x)
+out.fit <- glm(sbp ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age+Site ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("age+site")
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)#adj = age+site+Fruit+Vegetables+Takeaway+Seafood
+dat.y <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "sbp","Age", "Site", "Fruits", "Vegetables", "Takeaway", "Seafood", "Gender", "BMI", "Alcohol", "Smoking_cig")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age+Site+Fruits+Vegetables+Takeaway+Seafood+Gender+BMI+Alcohol+Smoking_cig, data = dat.y)
+out.fit <- glm(sbp ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age+Site+Fruits+Vegetables+Takeaway+Seafood+Gender+BMI+Alcohol+Smoking_cig ,data = dat.y, family = gaussian)
+med.out1 <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("mutivariate")
+mediation:::print.summary.mediate(summary(med.out1))
+
+sink("Mediation_arcsineSpp_MAP_Lachno_Sugar.doc")
+####################  MAP ##############
+set.seed(1234)# unadjusted
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "Age", "Site","MAP")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks, data = dat.x)
+out.fit <- glm(MAP ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)# adj = age
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "MAP","Age")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age, data = dat.x)
+out.fit <- glm(MAP ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("age")
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)#adj = age +site
+dat.x <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "MAP","Age", "Site")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age+Site, data = dat.x)
+out.fit <- glm(MAP ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age+Site ,data = dat.x, family = gaussian)
+med.out <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("age+site")
+mediation:::print.summary.mediate(summary(med.out))
+
+set.seed(1234)#adj = age+site+Fruit+Vegetables+Takeaway+Seafood
+dat.y <- na.omit(dat.arc[,c("Lachnospiraceae_bacterium_8_1_57FAA", "Sugar_drinks", "MAP","Age", "Site", "Fruits", "Vegetables", "Takeaway", "Seafood", "Gender", "BMI", "Alcohol", "Smoking_cig")])
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Sugar_drinks+Age+Site+Fruits+Vegetables+Takeaway+Seafood+Gender+BMI+Alcohol+Smoking_cig, data = dat.y)
+out.fit <- glm(MAP ~ Lachnospiraceae_bacterium_8_1_57FAA + Sugar_drinks +Age+Site+Fruits+Vegetables+Takeaway+Seafood+Gender+BMI+Alcohol+Smoking_cig ,data = dat.y, family = gaussian)
+med.out1 <- mediate(med.fit, out.fit, treat = "Sugar_drinks", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", sims = 1000, boot = TRUE)
+print("mutivariate")
+mediation:::print.summary.mediate(summary(med.out1))
+sink()
+
+
+# correlation
+corr <- cor.test(x=dat.arc$Lachnospiraceae_bacterium_8_1_57FAA, y=dat.arc$MAP, method = 'spearman')
+corr$estimate
+corr$p.value
+# > corr$estimate
+# rho = 0.2683827 
+# > corr$p.value
+# p = 0.007232921
+
+library(ggplot2)
+ggplot(dat.arc, aes(x= Lachnospiraceae_bacterium_8_1_57FAA, y=MAP)) + 
+  geom_point(color='#2980B9', size = 4) + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE, color='#2C3E50')
+
+# abundance
+ggplot(dat.arc, aes(factor(Site), Lachnospiraceae_bacterium_8_1_57FAA)) + 
+  geom_bar(stat = "identity") 
+
+
+```
+
+
+#### Mediation and moderation on TSI species data
+ADE; Average Direct Effect. ACME; Average Causal Mediation Effect
+```{r}
+sink("Mediation_relab.doc")
+for (outc in outcomes){
+# for (outc in outcomes){
+  for (name in exposures){
+    for (i in 82:ncol(dat)){
+      dat.x <- na.omit(dat[,c(names(dat[i]),name, outc)])
+      dput(names(dat.x))
+      colnames(dat.x) <- c("x","y","z")
+      ## A fitted model object for mediator
+      med.fit <- lm(x ~ y, data = dat.x)
+      ## A fitted model object for outcomes
+      out.fit <- glm(z ~ x + y ,data = dat.x, family = gaussian)
+      ## Mediate with bootsrapping
+      med.out <- mediate(med.fit, out.fit, treat = "y", mediator = "x", sims = 1000, boot = TRUE)
+      print(summary(med.out))
+      plot(med.out)
+}}}
+sink()
+
+sink("Mediation_logAbundance.doc")
+for (outc in outcomes){
+  for (name in exposures){
+    for (i in 82:ncol(dat.log)){
+      dat.x <- na.omit(dat.log[,c(names(dat.log[i]),name, outc)])
+      dput(names(dat.x))
+      colnames(dat.x) <- c("x","y","z")
+      ## A fitted model object for mediator
+      med.fit <- lm(x ~ y, data = dat.x)
+      ## A fitted model object for outcomes
+      out.fit <- glm(z ~ x + y ,data = dat.x, family = gaussian)
+      ## Mediate with bootsrapping
+      med.out <- mediate(med.fit, out.fit, treat = "y", mediator = "x", sims = 1000, boot = TRUE)
+      print(summary(med.out))
+}}}
+sink()
+
+sink("Mediation_arcsineAbundance.doc")
+for (outc in outcomes){
+  for (name in exposures){
+    for (i in 82:ncol(dat.arc)){
+      dat.x <- na.omit(dat.arc[,c(names(dat.arc[i]),name, outc)])
+      dput(names(dat.x))
+      colnames(dat.x) <- c("x","y","z")
+      ## A fitted model object for mediator
+      med.fit <- lm(x ~ y, data = dat.x)
+      ## A fitted model object for outcomes
+      out.fit <- glm(z ~ x + y ,data = dat.x, family = gaussian)
+      ## Mediate with bootsrapping
+      med.out <- mediate(med.fit, out.fit, treat = "y", mediator = "x", sims = 1000, boot = TRUE)
+      print(summary(med.out))
+}}}
+sink()
+
+sink("Mediation_presence_absence.doc")
+for (outc in outcomes){
+  for (name in exposures){
+    for (i in 82:ncol(dat.presAbs)){
+      dat.x <- na.omit(dat.presAbs[,c(names(dat.presAbs[i]),name, outc)])
+      dput(names(dat.x))
+      colnames(dat.x) <- c("x","y","z")
+      ## A fitted model object for mediator
+      med.fit <- lm(x ~ y, data = dat.x)
+      ## A fitted model object for outcomes
+      out.fit <- glm(z ~ x + y ,data = dat.x)
+      ## Mediate with bootsrapping
+      med.out <- mediate(med.fit, out.fit, treat = "y", mediator = "x", sims = 1000, boot = TRUE)
+      print(summary(med.out))
+}}}
+sink()
+
+############## Age adjusted #####################
+sink("Mediation_arcsineAbundance_ageAdj.doc")
+for (outc in outcomes){
+  for (name in exposures){
+    for (i in 47:ncol(dat.arc)){
+      if(name=="Age"){next}else{
+        dat.x <- na.omit(dat[,c(names(dat[i]),name, outc,"Age")])
+        dput(names(dat.x))
+        colnames(dat.x) <- c("x","y","z","Age")
+        ## A fitted model object for mediator
+        med.fit <- lm(x ~ y + Age, data = dat.x)
+        ## A fitted model object for outcomes
+        out.fit <- glm(z ~ x + y + Age ,data = dat.x, family = gaussian)
+        ## Mediate with bootsrapping
+        med.out <- mediate(med.fit, out.fit, treat = "y", mediator = "x", sims = 1000, boot = TRUE)
+        #print(summary(med.out))
+		    mediation:::print.summary.mediate(summary(med.out))
+		    noquote(strrep("-", 62))
+}}}}
+sink()
+
+############### ISLAND #########################
+sink("Mediation_lsland.doc")
+for (outc in outcomes){
+  for (i in 82:ncol(dat.arc)){
+    if(outc=="Age"){next}else{
+    dat.x <- na.omit(dat.arc[,c(names(dat.arc[i]),"Site", outc)])
+    dput(names(dat.x))
+    colnames(dat.x) <- c("x","y","z")
+    ## A fitted model object for mediator
+    med.fit <- lm(x ~ y, data = dat.x)
+    ## A fitted model object for outcomes
+    out.fit <- glm(z ~ x + y ,data = dat.x, family = gaussian)
+    ## Mediate with bootsrapping
+    med.out <- mediate(med.fit, out.fit, treat = "y", mediator = "x", sims = 500, boot = TRUE)
+    print(summary(med.out))
+}}}
+sink()
+
+
+# #for Presence aBSENCE:: FAMILY=BINOMIAL, LINK=probit
+med.fit <- lm(Lachnospiraceae_bacterium_8_1_57FAA ~ Alcohol + Age, data = dat.arc)
+## A fitted model object for outcomes
+out.fit <- glm(IL15 ~ Lachnospiraceae_bacterium_8_1_57FAA + Alcohol + Age , data = dat.arc, family = gaussian)
+## Mediate with bootsrapping
+med.out <- mediate(med.fit, out.fit, treat = "Alcohol", mediator = "Lachnospiraceae_bacterium_8_1_57FAA", boot = TRUE)
+summary(med.out, digits=5)
+mediation:::print.summary.mediate(summary(med.out))
+
+plot(med.out)
+# 
+# 
+x<- dat.arc
+s3d <- scatterplot3d(x$Roseburia_intestinalis,x$Alcohol,x$IL15, type = "h", color = "blue", angle=60, pch = 16) # Add regression plane
+my.lm <- lm(x$IL15 ~ x$Roseburia_intestinalis+x$Alcohol)
+s3d$plane3d(my.lm)
+
+#### Plot mediation Roseburia intestanalis
+
+my_comparisons <- list( c("1", "2"))
+ggboxplot(dat.arc, x = "Site", y = "Roseburia_intestinalis", color = "Site", palette = "jco")+ 
+    stat_compare_means(comparisons = my_comparisons)+ # Add pairwise comparisons p-value
+    stat_compare_means(label.y = 0.5)
+
+ggboxplot(dat.arc, y = "Age", x = "Site", color = "Site", palette = "jco")+ 
+  stat_compare_means(method = "anova", label.y = 80)+      # Add global p-value
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = ".all.")  
+
+ggscatter(dat.arc, "IL15","Alcohol")
+
+```
+
+### Scatter mediation-interraction p-values
+```{r}
+library(ggplot2)
+p_value <- read.delim("Type_III_SS_pva_filtered.tsv", sep = "\t")
+(gp <- ggplot(p_value%>% filter(type=="inte_site_spp"), 
+        aes(y = Pr.F, x = reorder(Source, -Pr.F))) + 
+    geom_point()+
+    ylab("P-value")+
+    xlab("Species-Site interaction")+
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "red", size = 1)+
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5)))
+
+ggsave(gp, filename = "interavtion_pvalue.pdf", height = 10, width = 12, units = "in")
+
+``` 
+
+#### Session information
+```{r}
+date()
+sessionInfo()
+
+```
+
+
