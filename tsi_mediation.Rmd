@@ -425,7 +425,7 @@ p_value <- read.delim("Type_III_SS_pva_filtered.tsv", sep = "\t")
     geom_hline(yintercept = 0.05, linetype = "dashed", color = "red", size = 1) +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5)))
 
-ggsave(gp, filename = "interavtion_pvalue.pdf", height = 10, width = 12, units = "in")
+ggsave(gp, filename = "interavtion_pvalue.pdf", height = 10, width = 12data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAYAAABWzo5XAAAAWElEQVR42mNgGPTAxsZmJsVqQApgmGw1yApwKcQiT7phRBuCzzCSDSHGMKINIeDNmWQlA2IigKJwIssQkHdINgxfmBBtGDEBS3KCxBc7pMQgMYE5c/AXPwAwSX4lV3pTWwAAAABJRU5ErkJggg==, units = "in")
 
 ``` 
 
